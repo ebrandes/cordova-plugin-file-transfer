@@ -22,7 +22,7 @@ import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
-import java.io.FileNotFoundException;
+import java.io.FileNotFoundExfception;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -61,6 +61,12 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import android.content.res.Resources;
+import android.content.Context;
+import android.app.NotificationManager;
+import android.support.v4.app.NotificationCompat;
+import android.support.v4.app.NotificationCompat.Builder;
+
 import android.net.Uri;
 import android.os.Build;
 import android.util.Log;
@@ -81,6 +87,9 @@ public class FileTransfer extends CordovaPlugin {
 
     private static HashMap<String, RequestContext> activeRequests = new HashMap<String, RequestContext>();
     private static final int MAX_BUFFER_SIZE = 16 * 1024;
+
+    NotificationManager mNotificationManager;
+    NotificationCompat.Builder mBuilder;
 
     private static final class RequestContext {
         String source;
@@ -730,6 +739,22 @@ public class FileTransfer extends CordovaPlugin {
     private void download(final String source, final String target, JSONArray args, CallbackContext callbackContext) throws JSONException {
         Log.d(LOG_TAG, "download " + source + " to " +  target);
 
+        Context contextApplication = cordova.getActivity().getApplicationContext();
+        Resources resources = contextApplication.getResources();
+        String pkgName = contextApplication.getPackageName();
+
+        int resId = resources.getIdentifier("ic_download_file_notification", "drawable", pkgName);
+
+        mNotificationManager = (NotificationManager) cordova.getActivity().getSystemService(Context.NOTIFICATION_SERVICE);
+        mBuilder = new NotificationCompat.Builder(cordova.getActivity()); 
+        mBuilder.setContentTitle("Download File")
+                .setContentText("Progress")
+                .setSmallIcon(resId);
+                  
+
+        final FileProgressBarTask progressBarTask = new FileProgressBarTask(mBuilder, mNotificationManager, 1);
+
+
         final CordovaResourceApi resourceApi = webView.getResourceApi();
 
         final boolean trustEveryone = args.optBoolean(2);
@@ -823,6 +848,11 @@ public class FileTransfer extends CordovaPlugin {
                     if (isLocalTransfer) {
                         readResult = resourceApi.openForRead(sourceUri);
                         if (readResult.length != -1) {
+
+                            long lng = Math.abs((progress.getLoaded() / 100) / 100);
+                            progressBarTask.onProgressUpdate(Integer.parseInt(String.valueOf(lng)));  
+
+
                             progress.setLengthComputable(true);
                             progress.setTotal(readResult.length);
                         }
@@ -871,6 +901,10 @@ public class FileTransfer extends CordovaPlugin {
                                 // Only trust content-length header if we understand
                                 // the encoding -- identity or gzip
                                 if (connection.getContentLength() != -1) {
+
+                                   // long lng = Math.abs((progress.getLoaded() / 100) / 100);
+                                    progressBarTask.onProgressUpdate(Integer.parseInt(String.valueOf(connection.getContentLength())));  
+
                                     progress.setLengthComputable(true);
                                     progress.setTotal(connection.getContentLength());
                                 }
@@ -895,8 +929,13 @@ public class FileTransfer extends CordovaPlugin {
                             while ((bytesRead = inputStream.read(buffer)) > 0) {
                                 outputStream.write(buffer, 0, bytesRead);
                                 // Send a progress event.
+
+                                long lng = Math.abs((progress.getLoaded() / 100) / 100);
+                                progressBarTask.onProgressUpdate(Integer.parseInt(String.valueOf(lng)));
+
                                 progress.setLoaded(inputStream.getTotalRawBytesRead());
                                 PluginResult progressResult = new PluginResult(PluginResult.Status.OK, progress.toJSONObject());
+                                
                                 progressResult.setKeepCallback(true);
                                 context.sendPluginResult(progressResult);
                             }
@@ -1011,11 +1050,7 @@ public class FileTransfer extends CordovaPlugin {
                         context.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, error));
                         context.aborted = true;
                         if (context.connection != null) {
-                            try {
-                                context.connection.disconnect();
-                            } catch (Exception e) {
-                                Log.e(LOG_TAG, "CB-8431 Catch workaround for fatal exception", e);
-                            }
+                            context.connection.disconnect();
                         }
                     }
                 }
