@@ -17,7 +17,7 @@
 #         under the License.
 -->
 
-# cordova-plugin-file-transfer
+# cordova-plugin-file-transfer  (EDIT : REPLACED DOWNLOAD TO DOWNLOADMANAGER IN ANDROID)
 
 This plugin allows you to upload and download files.
 
