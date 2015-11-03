@@ -50,11 +50,33 @@
 
         <config-file target="AndroidManifest.xml" parent="/*">
             <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+            <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />                       
         </config-file>
 
+
+       
         <source-file src="src/android/FileTransfer.java" target-dir="src/org/apache/cordova/filetransfer" />
         <source-file src="src/android/FileProgressResult.java" target-dir="src/org/apache/cordova/filetransfer" />
         <source-file src="src/android/FileUploadResult.java" target-dir="src/org/apache/cordova/filetransfer" />
+         <source-file src="src/android/FileProgressBarTask.java" target-dir="src/org/apache/cordova/filetransfer" />
+
+
+        
+       <source-file src="src/android/libs/android-support-v4.jar" target-dir="libs"/>
+
+        <!--
+            LibraryProject/res/*.*
+            search: (src/android/(.+?)/[^/]+)$
+            replace: <source-file src="$1" target-dir="$2"/>
+        -->
+
+
+        <source-file src="src/android/res/drawable-hdpi/ic_download_file_notification.png" target-dir="res/drawable-hdpi"/>
+        <source-file src="src/android/res/drawable-hdpi-v11/ic_download_file_notification.png" target-dir="res/drawable-hdpi-v11"/>
+        <source-file src="src/android/res/drawable-mdpi/ic_download_file_notification.png" target-dir="res/drawable-mdpi"/>
+        <source-file src="src/android/res/drawable-mdpi-v11/ic_download_file_notification.png" target-dir="res/drawable-mdpi-v11"/>
+        <source-file src="src/android/res/drawable-xhdpi/ic_download_file_notification.png" target-dir="res/drawable-xhdpi"/>
+        <source-file src="src/android/res/drawable-xhdpi-v11/ic_download_file_notification.png" target-dir="res/drawable-xhdpi-v11"/>
     </platform>
 
     <!-- amamzon-fireos -->

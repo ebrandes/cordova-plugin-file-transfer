@@ -206,13 +206,17 @@ FileTransfer.prototype.download = function(source, target, successCallback, erro
             else if (result.isFile) {
                 entry = new (require('cordova-plugin-file.FileEntry'))();
             }
-            entry.isDirectory = result.isDirectory;
-            entry.isFile = result.isFile;
-            entry.name = result.name;
-            entry.fullPath = result.fullPath;
-            entry.filesystem = new FileSystem(result.filesystemName || (result.filesystem == window.PERSISTENT ? 'persistent' : 'temporary'));
-            entry.nativeURL = result.nativeURL;
-            successCallback(entry);
+            if(result == "OK"){
+                successCallback(entry);
+            } else {
+                entry.isDirectory = result.isDirectory;
+                entry.isFile = result.isFile;
+                entry.name = result.name;
+                entry.fullPath = result.fullPath;
+                entry.filesystem = new FileSystem(result.filesystemName || (result.filesystem == window.PERSISTENT ? 'persistent' : 'temporary'));
+                entry.nativeURL = result.nativeURL;
+                successCallback(entry);
+            }
         }
     };
 

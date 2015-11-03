@@ -22,7 +22,7 @@ import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
-import java.io.FileNotFoundExfception;
+import java.io.FileNotFoundException;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -31,7 +31,6 @@ import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.net.HttpURLConnection;
 import java.net.URLConnection;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
@@ -63,14 +62,40 @@ import org.json.JSONObject;
 
 import android.content.res.Resources;
 import android.content.Context;
+
+
+import android.os.Build;
+import android.util.Log;
+import android.webkit.CookieManager;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.DownloadManager;
+import android.app.PendingIntent;
+import android.content.ContentResolver;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.AsyncTask;
+import android.os.Bundle;
+import android.os.Environment;
+import android.webkit.MimeTypeMap;
+import android.webkit.URLUtil;
+import android.widget.Toast;
+
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URL;
+import java.security.interfaces.DSAParams;
+import java.util.concurrent.Future;
 import android.app.NotificationManager;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.app.NotificationCompat.Builder;
 
-import android.net.Uri;
-import android.os.Build;
-import android.util.Log;
-import android.webkit.CookieManager;
+
 
 public class FileTransfer extends CordovaPlugin {
 
@@ -88,9 +113,15 @@ public class FileTransfer extends CordovaPlugin {
     private static HashMap<String, RequestContext> activeRequests = new HashMap<String, RequestContext>();
     private static final int MAX_BUFFER_SIZE = 16 * 1024;
 
-    NotificationManager mNotificationManager;
+    NotificationManager mNotifyManager;
     NotificationCompat.Builder mBuilder;
+    
+    Intent intentNotification;
+    PendingIntent pendingIntent;
+    String myURI;
 
+
+    
     private static final class RequestContext {
         String source;
         String target;
@@ -184,14 +215,16 @@ public class FileTransfer extends CordovaPlugin {
 
     @Override
     public boolean execute(String action, JSONArray args, final CallbackContext callbackContext) throws JSONException {
-        if (action.equals("upload") || action.equals("download")) {
+        
+        PluginResult result = null;
+        final RequestContext context = new RequestContext(args.getString(0), args.getString(1), callbackContext);
+
+        if (action.equals("upload")) {
             String source = args.getString(0);
             String target = args.getString(1);
 
             if (action.equals("upload")) {
                 upload(source, target, args, callbackContext);
-            } else {
-                download(source, target, args, callbackContext);
             }
             return true;
         } else if (action.equals("abort")) {
@@ -199,8 +232,44 @@ public class FileTransfer extends CordovaPlugin {
             abort(objectId);
             callbackContext.success();
             return true;
+        } else if(action.equals("download")){
+
+          //LÓGICA DE DOWNLOAD
+
+
+            myURI = args.getString(0);
+            downloadFile(myURI);
+            callbackContext.success();
+            return true;
+        
         }
+
+        result = new PluginResult(PluginResult.Status.OK, myURI);
+        context.sendPluginResult(result);
         return false;
+    }
+
+
+    public void downloadFile(String myURI){
+      DownloadManager.Request req = new DownloadManager.Request(Uri.parse(myURI));
+      req.setTitle("Download");
+      req.setDescription("Downloading...");
+
+      //req.setAllowedNetworkTypes(DownloadManager.Request.NETWORK_WIFI);
+      req.allowScanningByMediaScanner();
+      req.setShowRunningNotification(true);
+      req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+      Toast.makeText(cordova.getActivity(),"Iniciando download",Toast.LENGTH_SHORT).show();
+      req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, getNameOfFile(myURI));
+      DownloadManager manager = (DownloadManager) cordova.getActivity().getSystemService(Context.DOWNLOAD_SERVICE);
+
+      manager.enqueue(req);
+
+    }
+
+    public String getNameOfFile(String myURI){
+        String nameOfFile = URLUtil.guessFileName(myURI, null, MimeTypeMap.getFileExtensionFromUrl(myURI));
+        return nameOfFile;
     }
 
     private static void addHeadersToRequest(URLConnection connection, JSONObject headers) {
@@ -271,6 +340,16 @@ public class FileTransfer extends CordovaPlugin {
 
         return cookie;
     }
+
+
+
+    private void scanPhoto(File imagefile){
+      Intent medicaScanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+      Uri contentURI = Uri.fromFile(imagefile);
+      cordova.getActivity().sendBroadcast(medicaScanIntent);
+      return;
+    }
+
 
     /**
      * Uploads the specified file to the server URL provided using an HTTP multipart request.
@@ -491,6 +570,7 @@ public class FileTransfer extends CordovaPlugin {
                             PluginResult progressResult = new PluginResult(PluginResult.Status.OK, progress.toJSONObject());
                             progressResult.setKeepCallback(true);
                             context.sendPluginResult(progressResult);
+
                         }
     
                         if (multipartFormUpload) {
@@ -730,303 +810,37 @@ public class FileTransfer extends CordovaPlugin {
         return arg;
     }
 
-    /**
-     * Downloads a file form a given URL and saves it to the specified directory.
-     *
-     * @param source        URL of the server to receive the file
-     * @param target            Full path of the file on the file system
-     */
-    private void download(final String source, final String target, JSONArray args, CallbackContext callbackContext) throws JSONException {
-        Log.d(LOG_TAG, "download " + source + " to " +  target);
-
-        Context contextApplication = cordova.getActivity().getApplicationContext();
-        Resources resources = contextApplication.getResources();
-        String pkgName = contextApplication.getPackageName();
-
-        int resId = resources.getIdentifier("ic_download_file_notification", "drawable", pkgName);
-
-        mNotificationManager = (NotificationManager) cordova.getActivity().getSystemService(Context.NOTIFICATION_SERVICE);
-        mBuilder = new NotificationCompat.Builder(cordova.getActivity()); 
-        mBuilder.setContentTitle("Download File")
-                .setContentText("Progress")
-                .setSmallIcon(resId);
-                  
-
-        final FileProgressBarTask progressBarTask = new FileProgressBarTask(mBuilder, mNotificationManager, 1);
-
-
-        final CordovaResourceApi resourceApi = webView.getResourceApi();
-
-        final boolean trustEveryone = args.optBoolean(2);
-        final String objectId = args.getString(3);
-        final JSONObject headers = args.optJSONObject(4);
-        
-        final Uri sourceUri = resourceApi.remapUri(Uri.parse(source));
-        // Accept a path or a URI for the source.
-        Uri tmpTarget = Uri.parse(target);
-        final Uri targetUri = resourceApi.remapUri(
-            tmpTarget.getScheme() != null ? tmpTarget : Uri.fromFile(new File(target)));
-
-        int uriType = CordovaResourceApi.getUriType(sourceUri);
-        final boolean useHttps = uriType == CordovaResourceApi.URI_TYPE_HTTPS;
-        final boolean isLocalTransfer = !useHttps && uriType != CordovaResourceApi.URI_TYPE_HTTP;
-        if (uriType == CordovaResourceApi.URI_TYPE_UNKNOWN) {
-            JSONObject error = createFileTransferError(INVALID_URL_ERR, source, target, null, 0, null);
-            Log.e(LOG_TAG, "Unsupported URI: " + sourceUri);
-            callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.IO_EXCEPTION, error));
-            return;
+    private String fileExt(String url) {
+        if (url.indexOf("?") > -1) {
+            url = url.substring(0, url.indexOf("?"));
         }
-
-        /* This code exists for compatibility between 3.x and 4.x versions of Cordova.
-         * Previously the CordovaWebView class had a method, getWhitelist, which would
-         * return a Whitelist object. Since the fixed whitelist is removed in Cordova 4.x,
-         * the correct call now is to shouldAllowRequest from the plugin manager.
-         */
-        Boolean shouldAllowRequest = null;
-        if (isLocalTransfer) {
-            shouldAllowRequest = true;
-        }
-        if (shouldAllowRequest == null) {
-            try {
-                Method gwl = webView.getClass().getMethod("getWhitelist");
-                Whitelist whitelist = (Whitelist)gwl.invoke(webView);
-                shouldAllowRequest = whitelist.isUrlWhiteListed(source);
-            } catch (NoSuchMethodException e) {
-            } catch (IllegalAccessException e) {
-            } catch (InvocationTargetException e) {
+        if (url.lastIndexOf(".") == -1) {
+            return null;
+        } else {
+            String ext = url.substring(url.lastIndexOf("."));
+            if (ext.indexOf("%") > -1) {
+                ext = ext.substring(0, ext.indexOf("%"));
             }
-        }
-        if (shouldAllowRequest == null) {
-            try {
-                Method gpm = webView.getClass().getMethod("getPluginManager");
-                PluginManager pm = (PluginManager)gpm.invoke(webView);
-                Method san = pm.getClass().getMethod("shouldAllowRequest", String.class);
-                shouldAllowRequest = (Boolean)san.invoke(pm, source);
-            } catch (NoSuchMethodException e) {
-            } catch (IllegalAccessException e) {
-            } catch (InvocationTargetException e) {
+            if (ext.indexOf("/") > -1) {
+                ext = ext.substring(0, ext.indexOf("/"));
             }
+            return ext.toLowerCase();
+
         }
-
-        if (!Boolean.TRUE.equals(shouldAllowRequest)) {
-            Log.w(LOG_TAG, "Source URL is not in white list: '" + source + "'");
-            JSONObject error = createFileTransferError(CONNECTION_ERR, source, target, null, 401, null);
-            callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.IO_EXCEPTION, error));
-            return;
-        }
-
-        
-        final RequestContext context = new RequestContext(source, target, callbackContext);
-        synchronized (activeRequests) {
-            activeRequests.put(objectId, context);
-        }
-        
-        cordova.getThreadPool().execute(new Runnable() {
-            public void run() {
-                if (context.aborted) {
-                    return;
-                }
-                HttpURLConnection connection = null;
-                HostnameVerifier oldHostnameVerifier = null;
-                SSLSocketFactory oldSocketFactory = null;
-                File file = null;
-                PluginResult result = null;
-                TrackingInputStream inputStream = null;
-                boolean cached = false;
-
-                OutputStream outputStream = null;
-                try {
-                    OpenForReadResult readResult = null;
-
-                    file = resourceApi.mapUriToFile(targetUri);
-                    context.targetFile = file;
-                    
-                    Log.d(LOG_TAG, "Download file:" + sourceUri);
-
-                    FileProgressResult progress = new FileProgressResult();
-
-                    if (isLocalTransfer) {
-                        readResult = resourceApi.openForRead(sourceUri);
-                        if (readResult.length != -1) {
-
-                            long lng = Math.abs((progress.getLoaded() / 100) / 100);
-                            progressBarTask.onProgressUpdate(Integer.parseInt(String.valueOf(lng)));  
-
-
-                            progress.setLengthComputable(true);
-                            progress.setTotal(readResult.length);
-                        }
-                        inputStream = new SimpleTrackingInputStream(readResult.inputStream);
-                    } else {
-                        // connect to server
-                        // Open a HTTP connection to the URL based on protocol
-                        connection = resourceApi.createHttpConnection(sourceUri);
-                        if (useHttps && trustEveryone) {
-                            // Setup the HTTPS connection class to trust everyone
-                            HttpsURLConnection https = (HttpsURLConnection)connection;
-                            oldSocketFactory = trustAllHosts(https);
-                            // Save the current hostnameVerifier
-                            oldHostnameVerifier = https.getHostnameVerifier();
-                            // Setup the connection not to verify hostnames
-                            https.setHostnameVerifier(DO_NOT_VERIFY);
-                        }
-        
-                        connection.setRequestMethod("GET");
-        
-                        // TODO: Make OkHttp use this CookieManager by default.
-                        String cookie = getCookies(sourceUri.toString());
-
-                        if(cookie != null)
-                        {
-                            connection.setRequestProperty("cookie", cookie);
-                        }
-                        
-                        // This must be explicitly set for gzip progress tracking to work.
-                        connection.setRequestProperty("Accept-Encoding", "gzip");
-    
-                        // Handle the other headers
-                        if (headers != null) {
-                            addHeadersToRequest(connection, headers);
-                        }
-        
-                        connection.connect();
-                        if (connection.getResponseCode() == HttpURLConnection.HTTP_NOT_MODIFIED) {
-                            cached = true;
-                            connection.disconnect();
-                            Log.d(LOG_TAG, "Resource not modified: " + source);
-                            JSONObject error = createFileTransferError(NOT_MODIFIED_ERR, source, target, connection, null);
-                            result = new PluginResult(PluginResult.Status.ERROR, error);
-                        } else {
-                            if (connection.getContentEncoding() == null || connection.getContentEncoding().equalsIgnoreCase("gzip")) {
-                                // Only trust content-length header if we understand
-                                // the encoding -- identity or gzip
-                                if (connection.getContentLength() != -1) {
-
-                                   // long lng = Math.abs((progress.getLoaded() / 100) / 100);
-                                    progressBarTask.onProgressUpdate(Integer.parseInt(String.valueOf(connection.getContentLength())));  
-
-                                    progress.setLengthComputable(true);
-                                    progress.setTotal(connection.getContentLength());
-                                }
-                            }
-                            inputStream = getInputStream(connection);
-                        }
-                    }
-
-                    if (!cached) {
-                        try {
-                            synchronized (context) {
-                                if (context.aborted) {
-                                    return;
-                                }
-                                context.connection = connection;
-                            }
-
-                            // write bytes to file
-                            byte[] buffer = new byte[MAX_BUFFER_SIZE];
-                            int bytesRead = 0;
-                            outputStream = resourceApi.openOutputStream(targetUri);
-                            while ((bytesRead = inputStream.read(buffer)) > 0) {
-                                outputStream.write(buffer, 0, bytesRead);
-                                // Send a progress event.
-
-                                long lng = Math.abs((progress.getLoaded() / 100) / 100);
-                                progressBarTask.onProgressUpdate(Integer.parseInt(String.valueOf(lng)));
-
-                                progress.setLoaded(inputStream.getTotalRawBytesRead());
-                                PluginResult progressResult = new PluginResult(PluginResult.Status.OK, progress.toJSONObject());
-                                
-                                progressResult.setKeepCallback(true);
-                                context.sendPluginResult(progressResult);
-                            }
-                        } finally {
-                            synchronized (context) {
-                                context.connection = null;
-                            }
-                            safeClose(inputStream);
-                            safeClose(outputStream);
-                        }
-
-                        Log.d(LOG_TAG, "Saved file: " + target);
-
-
-                        // create FileEntry object
-                        Class webViewClass = webView.getClass();
-                        PluginManager pm = null;
-                        try {
-                            Method gpm = webViewClass.getMethod("getPluginManager");
-                            pm = (PluginManager) gpm.invoke(webView);
-                        } catch (NoSuchMethodException e) {
-                        } catch (IllegalAccessException e) {
-                        } catch (InvocationTargetException e) {
-                        }
-                        if (pm == null) {
-                            try {
-                                Field pmf = webViewClass.getField("pluginManager");
-                                pm = (PluginManager)pmf.get(webView);
-                            } catch (NoSuchFieldException e) {
-                            } catch (IllegalAccessException e) {
-                            }
-                        }
-                        file = resourceApi.mapUriToFile(targetUri);
-                        context.targetFile = file;
-                        FileUtils filePlugin = (FileUtils) pm.getPlugin("File");
-                        if (filePlugin != null) {
-                            JSONObject fileEntry = filePlugin.getEntryForFile(file);
-                            if (fileEntry != null) {
-                                result = new PluginResult(PluginResult.Status.OK, fileEntry);
-                            } else {
-                                JSONObject error = createFileTransferError(CONNECTION_ERR, source, target, connection, null);
-                                Log.e(LOG_TAG, "File plugin cannot represent download path");
-                                result = new PluginResult(PluginResult.Status.IO_EXCEPTION, error);
-                            }
-                        } else {
-                            Log.e(LOG_TAG, "File plugin not found; cannot save downloaded file");
-                            result = new PluginResult(PluginResult.Status.ERROR, "File plugin not found; cannot save downloaded file");
-                        }
-                    }
-                    
-                } catch (FileNotFoundException e) {
-                    JSONObject error = createFileTransferError(FILE_NOT_FOUND_ERR, source, target, connection, e);
-                    Log.e(LOG_TAG, error.toString(), e);
-                    result = new PluginResult(PluginResult.Status.IO_EXCEPTION, error);
-                } catch (IOException e) {
-                    JSONObject error = createFileTransferError(CONNECTION_ERR, source, target, connection, e);
-                    Log.e(LOG_TAG, error.toString(), e);
-                    result = new PluginResult(PluginResult.Status.IO_EXCEPTION, error);
-                } catch (JSONException e) {
-                    Log.e(LOG_TAG, e.getMessage(), e);
-                    result = new PluginResult(PluginResult.Status.JSON_EXCEPTION);
-                } catch (Throwable e) {
-                    JSONObject error = createFileTransferError(CONNECTION_ERR, source, target, connection, e);
-                    Log.e(LOG_TAG, error.toString(), e);
-                    result = new PluginResult(PluginResult.Status.IO_EXCEPTION, error);
-                } finally {
-                    synchronized (activeRequests) {
-                        activeRequests.remove(objectId);
-                    }
-
-                    if (connection != null) {
-                        // Revert back to the proper verifier and socket factories
-                        if (trustEveryone && useHttps) {
-                            HttpsURLConnection https = (HttpsURLConnection) connection;
-                            https.setHostnameVerifier(oldHostnameVerifier);
-                            https.setSSLSocketFactory(oldSocketFactory);
-                        }
-                    }
-
-                    if (result == null) {
-                        result = new PluginResult(PluginResult.Status.ERROR, createFileTransferError(CONNECTION_ERR, source, target, connection, null));
-                    }
-                    // Remove incomplete download.
-                    if (!cached && result.getStatus() != PluginResult.Status.OK.ordinal() && file != null) {
-                        file.delete();
-                    }
-                    context.sendPluginResult(result);
-                }
-            }
-        });
     }
+
+    private String getMimeType(String url)
+    {
+        String parts[]=url.split("\\.");
+        String extension=parts[parts.length-1];
+        String type = null;
+        if (extension != null) {
+            MimeTypeMap mime = MimeTypeMap.getSingleton();
+            type = mime.getMimeTypeFromExtension(extension);
+        }
+        return type;
+    }
+
 
     /**
      * Abort an ongoing upload or download.
@@ -1057,4 +871,6 @@ public class FileTransfer extends CordovaPlugin {
             });
         }
     }
+
+
 }
